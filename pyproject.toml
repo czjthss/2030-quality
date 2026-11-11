@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "2030-quality"
+version = "0.1.0"
+description = "Intel Lab time-series and FDA MAUDE relational data quality experiments"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+timeseries = ["numpy>=1.24"]
+trend = ["numpy>=1.24", "scipy>=1.11"]
+
+[tool.setuptools]
+license-files = ["NOTICE", "LICENSES/Apache-2.0.txt"]
+
+[tool.setuptools.packages.find]
+include = ["quality_governance", "quality_governance.*"]

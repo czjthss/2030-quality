@@ -1,0 +1,8 @@
+The time-series scoring module includes a Python adaptation of Apache IoTDB.
+
+Apache IoTDB
+Copyright 2018-2026 The Apache Software Foundation.
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+See LICENSES/Apache-2.0.txt for the license of the adapted code.

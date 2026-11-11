@@ -1,47 +1,32 @@
 # 时序与关系数据质量治理
 
-本仓库包含两套独立实验。Intel Lab 按设备和变量评估温度、湿度、光照和电压序列，处理时间戳和数值后重新评分。FDA MAUDE 流式读取历史主表和 2026 年主表中的厂家报告，按原始日期保留可判定及时的报告，再按同条报告中的完整邮编修正分段字段。
+本仓库包含两套独立实验。Intel Lab 评估温度、湿度、光照和电压序列，治理时间戳和数值。FDA MAUDE 评估历史主表和 2026 年主表中的厂家报告。
 
 ## 八项指标的计算位置
 
 ### Intel Lab 时序数据
 
-以下公式按单条序列计算，`N` 是该序列的输入点数。完整性、一致性和时效性共用一个时间戳检测窗口。汇总时先累加各序列的错误数和分母，再计算比率。
+`N` 为单条序列的输入点数。全量分数按各项指标的分母加权汇总。
 
 | 指标 | 计算公式 | 代码 |
 | --- | --- | --- |
-| 完整性 | `1 − (缺失采样点数 + 非有限值个数) / (N + 缺失采样点数)` | [`time_counts`](quality_governance/timeseries/scoring.py#L24)、[`metric_counts`](quality_governance/timeseries/scoring.py#L99) |
-| 一致性 | `1 − 冗余点数 / N` | [`time_counts`](quality_governance/timeseries/scoring.py#L24)、[`metric_counts`](quality_governance/timeseries/scoring.py#L99) |
-| 时效性 | `1 − 推断延迟点数 / N` | [`time_counts`](quality_governance/timeseries/scoring.py#L24)、[`metric_counts`](quality_governance/timeseries/scoring.py#L99) |
-| 有效性 | `1 − 四类异常计数之和 / (4 × N)` | [`outliers`](quality_governance/timeseries/scoring.py#L90)、[`evaluate`](quality_governance/timeseries/scoring.py#L115)、[`metric_counts`](quality_governance/timeseries/scoring.py#L99) |
+| 完整性 | `1 − (缺失采样点数 + 非有限值个数) / (N + 缺失采样点数)` | [完整性计算](quality_governance/timeseries/scoring.py#L104) |
+| 一致性 | `1 − 冗余点数 / N` | [一致性计算](quality_governance/timeseries/scoring.py#L105) |
+| 时效性 | `1 − 推断延迟点数 / N` | [时效性计算](quality_governance/timeseries/scoring.py#L106) |
+| 有效性 | `1 − 四类异常计数之和 / (4 × N)` | [有效性计算](quality_governance/timeseries/scoring.py#L107) |
 
-`time_counts` 用相邻间隔的中位数作参照，在 10 点窗口中区分过密点、推断延迟点和缺失采样点。时效性反映时间戳的间隔模式。有效性分别检查原值、相邻差值、变化速率和相邻速率之差。在每一类中，观测与该类中位数的绝对差超过 `3 × 1.4826 × MAD` 即计为异常，MAD 为该类绝对差的中位数。`evaluate` 评估一条序列，`pool` 汇总多条序列。实现依据固定版本的 Apache IoTDB。[固定版本的 TimeSeriesQuality](https://github.com/apache/iotdb/blob/fc6f68c213230d0bb166420f901f3bc8b00663ba/library-udf/src/main/java/org/apache/iotdb/library/dquality/util/TimeSeriesQuality.java)
-
-| 处理步骤 | 代码 |
-| --- | --- |
-| 尝试将疑似延迟点移到邻近空位，补短缺口，拉开过密点 | [`timestamp_repair.py`](quality_governance/timeseries/timestamp_repair.py) 的 `repair_timestamps` |
-| 补数值和调整异常读数，按需尝试降噪或趋势拟合 | [`value_repair.py`](quality_governance/timeseries/value_repair.py)、[`smooth_candidate.py`](quality_governance/timeseries/smooth_candidate.py)、[`trend_model.py`](quality_governance/timeseries/trend_model.py) |
-| 串联修复并独立计分，按设备和变量跑全量实验 | [`repair.py`](quality_governance/timeseries/repair.py) 的 `repair_series`、[`benchmark.py`](quality_governance/timeseries/benchmark.py) |
+时效性根据采样时间戳的间隔推断。有效性检查原值、相邻差值、变化速率和相邻速率之差。每一类中，偏离该类中位数超过 `3 × 1.4826 × MAD` 即计为异常，MAD 是这些绝对偏差的中位数。[Apache IoTDB TimeSeriesQuality 源码](https://github.com/apache/iotdb/blob/fc6f68c213230d0bb166420f901f3bc8b00663ba/library-udf/src/main/java/org/apache/iotdb/library/dquality/util/TimeSeriesQuality.java)
 
 ### FDA MAUDE 关系数据
 
-关系数据的四项指标都在 `relational/scoring.py`。程序逐条累加计数，再用各自的分母计算比率。分母为零时输出 `null`。[`count_report`](quality_governance/relational/scoring.py#L37) · [`Counts.export`](quality_governance/relational/scoring.py#L26)
-
-| 指标 | 分子 | 分母 | `Counts` 中的分子与分母 |
+| 指标 | 分子 | 分母 | 代码 |
 | --- | --- | --- | --- |
-| 完整性 `C` | 厂家首次获知日期字段非空的报告数 | 被评估的厂家报告数 | `manufacturer_date_present` / `records` |
-| 一致性 `S` | 五位邮编和四位扩展码均与同条报告的完整邮编匹配的报告数 | 美国联系地址中，完整 ZIP+4 可解析且两个分段字段均非空的报告数 | `consistency_pass` / `consistency_eligible` |
-| 时效性 `T_30` | FDA 收件日期减厂家首次获知日期在 0 至 30 个自然日内的报告数 | 两日期均可解析且时间差非负的报告数 | `within_30_days` / `delay_eligible` |
-| 有效性 `V` | 邮编扩展码恰为四位 ASCII 数字的报告数 | 美国联系地址中，邮编扩展码非空的报告数 | `validity_pass` / `validity_eligible` |
+| 完整性 | 厂家首次获知日期字段非空的报告数 | 被评估的厂家报告数 | [完整性计算](quality_governance/relational/scoring.py#L30) |
+| 一致性 | 五位邮编和四位扩展码均与同条报告的完整邮编匹配的报告数 | 美国联系地址中，完整 ZIP+4 可解析且两个分段字段均非空的报告数 | [一致性计算](quality_governance/relational/scoring.py#L31) |
+| 时效性 | FDA 收件日期减厂家首次获知日期在 0 至 30 个自然日内的报告数 | 两日期均可解析且时间差非负的报告数 | [时效性计算](quality_governance/relational/scoring.py#L32) |
+| 有效性 | 邮编扩展码恰为四位 ASCII 数字的报告数 | 美国联系地址中，邮编扩展码非空的报告数 | [有效性计算](quality_governance/relational/scoring.py#L33) |
 
-| 处理步骤 | 代码 |
-| --- | --- |
-| 从 ZIP 流式读取主表和解析行 | [`reader.py`](quality_governance/relational/reader.py) |
-| 判定报告类型和原始日期差 | [`dates.py`](quality_governance/relational/dates.py) 的 `is_ordinary_initial`、`date_status` |
-| 根据完整 ZIP+4 修正两个分段字段 | [`postal.py`](quality_governance/relational/postal.py) 的 `correct_contact_zip` |
-| 串联筛选、邮编修正、评分和导出 | [`maude.py`](quality_governance/relational/maude.py) 的 `export_subset` |
-
-普通初始报告筛选接受 `Thirty-Day` 或 `Initial` 标签，要求报告阶段含 `I`，并排除有汇总或豁免信号的记录。程序只保留原始日期差 `DATE_RECEIVED − DATE_MANUFACTURER_RECEIVED` 为 0 至 30 个自然日的记录，然后修正邮编并重新评分。完整性和时效性是在保留集合上计算的。一致性与有效性共用邮编修正规则。
+治理时保留原始日期差为 0 至 30 个自然日的普通初始报告，再按同一条报告的完整邮编修正分段字段。
 
 ## 安装与运行
 
@@ -85,25 +70,21 @@ FDA 文件会更新。若持有实验所用的两份冻结快照，可加 `--ver
 
 ### Intel Lab 四变量全量实验
 
-治理前后使用同一批 224 条可评分序列，按错误数和分母汇总。点数按设备和变量累计。
+治理前后使用同一批可评分序列。
 
-| 处理阶段 | 点数 | 完整性 | 一致性 | 时效性 | 有效性 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 治理前 | 9,206,054 | 73.52% | 98.63% | 98.10% | 82.98% |
-| 治理后 | 15,199,265 | 100.00% | 99.89% | 100.00% | 96.54% |
+| 处理阶段 | 完整性 | 一致性 | 时效性 | 有效性 |
+| --- | ---: | ---: | ---: | ---: |
+| 治理前 | 73.52% | 98.63% | 98.10% | 82.98% |
+| 治理后 | 100.00% | 99.89% | 100.00% | 96.54% |
 
-治理后包含 5,993,211 个估计的采样点。只在原始行和原始时间戳上复算，治理后有效性为 94.48%。运行结果 JSON 的 `summary.before` 和 `summary.after` 分别对应表中两行。
+治理后的分数包含估计的采样点。只在原始行和原始时间戳上复算，治理后有效性为 94.48%。
 
 ### FDA MAUDE 历史及 2026 年主表厂家报告
 
-| 处理阶段 | 报告数 | 完整性 | 一致性 | 30 天时效性 | 有效性 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 治理前，全部厂家报告 | 25,492,863 | 85.96% | 82.60% | 87.42% | 82.59% |
-| 筛选及时报告后，修正邮编前 | 15,019,320 | 100.00% | 93.1810% | 100.00% | 93.1756% |
-| 修正邮编后 | 15,019,320 | 100.00% | 100.00% | 100.00% | 99.9942% |
+| 处理阶段 | 完整性 | 一致性 | 30 天时效性 | 有效性 |
+| --- | ---: | ---: | ---: | ---: |
+| 治理前，全部厂家报告 | 85.96% | 82.60% | 87.42% | 82.59% |
+| 筛选及时报告后，修正邮编前 | 100.00% | 93.1810% | 100.00% | 93.1756% |
+| 修正邮编后 | 100.00% | 100.00% | 100.00% | 99.9942% |
 
-治理前的 30 天时效性分母为 21,443,279 条日期可解析且日期差非负的厂家报告。筛选同时要求符合普通初始报告规则，最终保留全部厂家报告的 58.92%。两列日期沿用原值，完整性与时效性的变化来自保留范围的变化。邮编修正覆盖 117,934 条报告。
-
-治理前可用两份快照的原始计数合并计算，`--verify-frozen` 会复核这些计数。[原始计数](quality_governance/relational/frozen.py)
-
-运行结果 JSON 的 `before_zip_repair_on_selected_rows` 和 `after` 对应表中后两行。
+筛选保留了全部厂家报告的 58.92%。两列日期沿用原值，完整性与时效性的变化来自保留范围的变化。
